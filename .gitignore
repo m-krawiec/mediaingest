@@ -1,0 +1,35 @@
+# Local config (contains site-specific paths / device hints)
+config.yml
+config.local.yml
+/etc/photo-ingest/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime artifacts (never commit ingested media or generated manifests/logs)
+*.prom
+*.jsonl
+*.log
+/inbox/
+/imports/
+/work/
+*.sha256
+file_manifest.tsv
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

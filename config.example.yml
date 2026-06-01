@@ -1,0 +1,94 @@
+# photo-ingest — example configuration
+#
+# Copy this file to /etc/photo-ingest/config.yml (or pass --config PATH) and edit.
+# Every path is configurable; nothing is hardcoded in the CLI.
+# Environment variables override the matching key (see docs/ARCHITECTURE.md):
+#   NVME_MEDIA_ROOT, HDD_ARCHIVE_ROOT, PHOTO_INGEST_CONFIG, ...
+
+# ---------------------------------------------------------------------------
+# Storage roots
+# ---------------------------------------------------------------------------
+storage:
+  # Fast working/staging tier (NVMe mirror). First landing zone for the card.
+  nvme_media_root: /nvme-mirror/media
+  # Long-term archive tier (HDD mirror). Source of truth.
+  hdd_archive_root: /hdd-mirror/archive/media
+
+  # Subpaths are derived from the roots above; override only if you must.
+  # nvme:  <nvme_media_root>/inbox/<import_id>/
+  # hdd:   <hdd_archive_root>/imports/<import_id>/
+  inbox_dirname: inbox
+  work_dirname: work
+  tmp_dirname: tmp
+  imports_dirname: imports
+  library_dirname: library
+  projects_dirname: projects
+  exports_dirname: exports
+  manifests_dirname: manifests
+  logs_dirname: logs
+
+# ---------------------------------------------------------------------------
+# Ingest behaviour
+# ---------------------------------------------------------------------------
+ingest:
+  # dcim      -> copy only the DCIM/ subtree (default)
+  # full_card -> copy the entire mounted card
+  copy_mode: dcim
+
+  # import_id template. Tokens: {date} {camera} {cardlabel} {seq}
+  # Result example: 2026-06-01_fuji-avpro-sd_001
+  import_id_template: "{date}_{camera}-{cardlabel}_{seq}"
+  date_format: "%Y-%m-%d"
+
+  # Default camera tag when not supplied via --camera and not derivable.
+  default_camera: cam
+
+  # Mount the source read-only when photo-ingest performs the mount itself.
+  mount_read_only: true
+  # Where photo-ingest mounts the card if it has to mount it.
+  mount_base: /mnt/photo-ingest
+
+  # Refuse to start unless the destination tier has at least
+  # source_bytes * free_space_safety_factor available.
+  free_space_safety_factor: 1.10
+
+  # rsync tuning. --partial is always added so --resume can continue.
+  rsync_extra_args: ["-a", "--info=progress2", "--no-compress"]
+
+# ---------------------------------------------------------------------------
+# Verification
+# ---------------------------------------------------------------------------
+verify:
+  # sha256 (default, ubiquitous) or b3sum (faster, must be installed).
+  checksum_algorithm: sha256
+  # full   -> checksum every file on both tiers (slow, strongest).
+  # sample -> checksum a random N% plus all files; count+size still 100%.
+  mode: full
+  # When mode: sample, fraction of files to checksum (0.0–1.0).
+  sample_fraction: 0.10
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
+metrics:
+  # Prometheus textfile collector directory. The node_exporter / Alloy
+  # textfile collector must be pointed at this same directory.
+  textfile_dir: /var/lib/node_exporter/textfile_collector
+  # Per-run metrics are also written to <import>/_ingest/metrics.prom
+  write_per_import: true
+
+logging:
+  # text|json for the human log line format on stdout (JSONL is always written).
+  console_format: text
+  level: INFO
+
+# ---------------------------------------------------------------------------
+# Classification — extension -> file_class. Lowercase, no leading dot.
+# Used ONLY for statistics/manifest/metrics. NEVER for filtering ingest.
+# ---------------------------------------------------------------------------
+classification:
+  raw: [raf, raw, dng, cr2, cr3, nef, arw, orf, rw2]
+  photo: [jpg, jpeg, heic, heif, png, tif, tiff]
+  video: [mov, mp4, m4v, avi, mts, m2ts]
+  sidecar: [xmp, dop, cos, xml, aae, thm]
+  # Anything not matched above is classified as "other" (still copied).
