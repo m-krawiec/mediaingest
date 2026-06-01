@@ -42,7 +42,8 @@ def cmd_run(args: argparse.Namespace, cfg: object) -> None:
     assert isinstance(cfg, Config)
 
     ingest_args = IngestArgs(
-        source_device=args.source_device,
+        source_device=getattr(args, "source_device", None),
+        source_path=getattr(args, "source_path", None),
         camera=args.camera,
         import_id=args.import_id,
         copy_mode=args.copy_mode,
@@ -109,9 +110,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # --- run ---
     p_run = sub.add_parser("run", help="Execute a full SD card ingest")
-    p_run.add_argument(
-        "--source-device", required=True, metavar="DEV",
-        help="Block device to ingest from, e.g. /dev/sdc1",
+    src_group = p_run.add_mutually_exclusive_group(required=True)
+    src_group.add_argument(
+        "--source-device", metavar="DEV",
+        help="Block device to ingest from, e.g. /dev/sdc1 (tool mounts it read-only)",
+    )
+    src_group.add_argument(
+        "--source-path", metavar="PATH",
+        help=(
+            "Pre-mounted source directory, e.g. /mnt/sdcard "
+            "(Docker / host-mounted; no device access needed)"
+        ),
     )
     p_run.add_argument(
         "--camera", metavar="TAG",

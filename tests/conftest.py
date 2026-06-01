@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from photo_ingest.config import Config
+from photo_ingest.ingest import IngestArgs
 
 
 @pytest.fixture()

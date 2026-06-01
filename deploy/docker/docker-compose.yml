@@ -1,0 +1,51 @@
+# photo-ingest Docker Compose
+#
+# The ingest container is NOT started automatically (profile: ingest).
+# Run it on demand:
+#
+#   # 1. Mount the SD card read-only on the HOST first:
+#   sudo mount -o ro /dev/sdc1 /mnt/sdcard
+#
+#   # 2. Run the ingest:
+#   docker compose --profile ingest run --rm photo-ingest \
+#     run --source-path /mnt/card --camera fuji --dry-run
+#
+#   # 3. Unmount after ingest:
+#   sudo umount /mnt/sdcard
+#
+# The container has NO device access and NO elevated privileges.
+# It only reads from /mnt/card and writes to the nvme/hdd mounts.
+
+services:
+  photo-ingest:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: photo-ingest:latest
+    profiles: [ingest]        # never starts on plain 'docker compose up'
+    restart: "no"
+    read_only: false           # needs to write to nvme/hdd volume mounts
+
+    volumes:
+      # SD card: pre-mounted on the host, bind-mounted read-only into container
+      - /mnt/sdcard:/mnt/card:ro
+
+      # Storage tiers: adjust to your actual mountpoints
+      - /nvme-mirror/media:/nvme-mirror/media:rw
+      - /hdd-mirror/archive/media:/hdd-mirror/archive/media:rw
+
+      # Config (read-only)
+      - /etc/photo-ingest:/etc/photo-ingest:ro
+
+      # Prometheus textfile collector (for node_exporter scraping metrics)
+      - /var/lib/node_exporter/textfile_collector:/var/lib/node_exporter/textfile_collector:rw
+
+    environment:
+      # Override storage roots via env if not using config file
+      NVME_MEDIA_ROOT: /nvme-mirror/media
+      HDD_ARCHIVE_ROOT: /hdd-mirror/archive/media
+
+    # No privileged, no device passthrough, no cap_add needed.
+    # The SD card is accessed as a plain directory via the bind mount above.
+    security_opt:
+      - no-new-privileges:true

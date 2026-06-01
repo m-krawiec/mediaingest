@@ -171,33 +171,52 @@ long-lived exporter/API is a later option for richer queries.
 | --- | --- | --- | --- |
 | ZFS pools, snapshots, scrubs | ✅ | — | — |
 | Pass card device / storage to VM | ✅ | — | — |
-| Mount card read-only, run rsync | — | ✅ | ❌ never |
-| Classify, manifest, checksum, verify | — | ✅ | ❌ |
-| Write logs/metrics artifacts | — | ✅ | — |
+| Mount card read-only on the VM host | — | ✅ one-liner | — |
+| Run rsync, classify, manifest, verify | — | — | ✅ photo-ingest container |
+| Write logs/metrics artifacts | — | — | ✅ via volume mounts |
 | Scrape/store/visualize metrics | — | textfile collector | ✅ Prometheus/Grafana |
-| Tail logs | — | journald source | ✅ Dozzle/Alloy |
+| Tail logs | — | — | ✅ Dozzle |
 
-## Risks of a container with `/dev` access
+## Docker deployment (recommended)
 
-Running the ingest in a container that is given `--privileged` or
-`--device=/dev/sdX` (or worse, `-v /dev:/dev`) is the most dangerous design choice
-available here:
+The preferred deployment is **Docker**, matching your existing stack. The key
+insight is that ingest never needs to touch `/dev` inside the container — the host
+mounts the card read-only, and the container sees it as a plain bind-mounted
+directory:
 
-- A bug or a wrong device argument can read/write **host block devices**, including
-  the system disks and the ZFS members.
-- `--privileged` effectively disables container isolation; a compromised or buggy
-  container can affect the VM.
-- Device passthrough to a container couples ingest correctness to Docker's device
-  cgroup state, which is harder to reason about and audit than a plain VM process.
-- The unstable `/dev/sdX` naming problem is now spread across two layers.
+```
+Host VM:    sudo mount -o ro /dev/sdc1 /mnt/sdcard
+Container:  bind-mount /mnt/sdcard → /mnt/card (read-only)
+            bind-mount /nvme-mirror/media (read-write)
+            bind-mount /hdd-mirror/archive/media (read-write)
+```
 
-The benefit (packaging convenience) does not justify the blast radius for a job
-whose entire purpose is *not* to damage data.
+The container has:
+- **No `--privileged`**
+- **No `--device` passthrough**
+- **No `--cap-add`**
+- `security_opt: no-new-privileges:true`
 
-### Safer alternative (the recommendation)
-Run ingest as a **systemd service / CLI in the Debian VM**, where block-device and
-mount access is normal and auditable, and use a **container only for the metrics
-exporter / future API**, which needs neither `/dev` nor privilege.
+It is an ordinary unprivileged container reading from one bind-mount and writing
+to two others, identical in privilege level to Grafana or Prometheus.
+
+The one manual step — `sudo mount -o ro /dev/sdc1 /mnt/sdcard` — stays on the host
+where it belongs. That one line is auditable, understood by every Linux admin, and
+keeps all block-device risk out of the container layer entirely.
+
+### Why not `--device` + `--cap-add SYS_ADMIN`?
+
+Technically possible, but the blast radius is larger: a bug passing the wrong
+device path could touch system disks or ZFS pool members. For a tool whose entire
+purpose is *not* to damage data, the safest choice is to keep the mount step on the
+host where it can be easily supervised.
+
+### `--source-path` vs `--source-device`
+
+| Flag | Use case | Requires privilege? |
+| --- | --- | --- |
+| `--source-path /mnt/card` | Docker / pre-mounted (recommended) | No |
+| `--source-device /dev/sdc1` | Bare-metal / systemd service in VM | Yes (mount) |
 
 ## MVP architecture
 
@@ -218,17 +237,26 @@ exporter / future API**, which needs neither `/dev` nor privilege.
 
 ## Deployment recommendation
 
-> **Recommendation: ingest = systemd service/CLI in the Debian VM; containers only
-> for the optional exporter/API. Do NOT use a privileged, `/dev`-mounting container
-> for ingest in the MVP.**
+> **Recommendation: run photo-ingest as a Docker container using `--source-path`
+> (pre-mounted directory). Mount the SD card on the Debian VM host with one
+> `sudo mount -o ro` command; the container has no device access.**
 
 | Option | Pros | Cons | Verdict |
 | --- | --- | --- | --- |
-| **Container with mount + device access** | One-command packaging; matches existing Docker stack | Needs `--privileged` or device passthrough; large blast radius on host disks; unstable `/dev/sdX` across two layers; harder to audit; couples data safety to Docker device cgroups | ❌ Not for MVP |
-| **systemd service/CLI in VM + container for exporter/API** | Block-device/mount access is native and auditable in the VM; minimal privilege; exporter/API stays unprivileged in Docker; clean responsibility split | Two deployment artifacts (a VM package + a container) instead of one | ✅ **Recommended** |
+| **Container + `--source-path` (pre-mounted)** | Fits existing Docker stack; no privilege; auditable; `security_opt: no-new-privileges` | One manual `mount` command on the host before each ingest | ✅ **Recommended** |
+| **Container + `--device` + `--cap-add SYS_ADMIN`** | Fully self-contained; auto-mount inside container | Device passthrough blast radius; harder to audit; `/dev/sdX` instability | ⚠️ Avoid for MVP |
+| **systemd service/CLI in VM** | Native block-device access; no Docker overhead | Outside existing Docker stack; separate install path | ✅ Valid alternative |
 
-Justification: ingest's defining requirement is *not damaging data on the wrong
-device*. The VM is the natural, least-privilege home for code that mounts cards
-and runs rsync. Observability is a separate, unprivileged concern that fits the
-existing Docker stack perfectly. Splitting them along the privilege boundary keeps
-the dangerous part small and the convenient part containerized.
+The recommended workflow:
+```bash
+# On the Debian VM host — identify and mount the card
+lsblk -o NAME,LABEL,FSTYPE,SIZE,RM,MOUNTPOINTS
+sudo mount -o ro /dev/sdc1 /mnt/sdcard
+
+# Run the container
+docker compose --profile ingest run --rm photo-ingest \
+  run --source-path /mnt/card --camera fuji --dry-run
+
+# Unmount when done
+sudo umount /mnt/sdcard
+```
