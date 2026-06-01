@@ -19,7 +19,7 @@
 services:
   photo-ingest:
     build:
-      context: ../..
+      context: .
       dockerfile: Dockerfile
     image: photo-ingest:latest
     profiles: [ingest]        # never starts on plain 'docker compose up'
